@@ -1,0 +1,9 @@
+Mathlib.Logic.Basic
+Mathlib.Logic.Equiv.Defs
+Mathlib.Data.Fin.Basic
+Mathlib.Data.Finset.Card
+Mathlib.Data.Fintype.Card
+Mathlib.Data.Fintype.Powerset
+Mathlib.Data.Sym.Sym2
+Mathlib.Data.Nat.Choose.Basic
+Mathlib.Algebra.BigOperators.Group.Finset.Basic
