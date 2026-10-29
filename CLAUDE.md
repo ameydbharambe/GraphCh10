@@ -5,7 +5,7 @@
 - docs/Chapter_10_Exercises_Clean.pdf: the problems. A problem may name an
   extra theorem (e.g. Supp. 49 names Dirac); that theorem is then allowed,
   but only after I approve it as an axiom.
-- Mathlib modules listed in allowed-imports.txt, plus single Mathlib.Tactic.* files.
+- Mathlib modules EXPLICITLY listed in `allowed-imports.txt`. Additional modules, including tactics, require approval before use. No Mathlib graph-theory definitions or theorems may be used, regardless of how they become accessible through imports
 
 ## SOURCE RULES
 1. Only GraphCh10/Foundations.lean imports Mathlib, and only allowlisted modules.
@@ -18,9 +18,10 @@
 4. Sheet results we do not prove live in GraphCh10/Results.lean as `axiom`s,
    each with a docstring quoting the sheet. You may PROPOSE an axiom, never add
    one without my approval. No other axioms. No native_decide.
+   Approved axioms are listed by name in `approved-axioms.txt`, which only I edit.
 5. Never change a definition or a theorem statement to make a proof easier.
    If a statement looks wrong, stop and tell me.
-6. Before saying a task is done, run `.\check.ps1` and `lake build`.
+6. Run `.\check.ps1` in development mode during construction, `.\check.ps1 -Final` before final acceptance, and `lake build` after relevant changes.
 
 ## MANDATORY PROOF STYLE: READABILITY OVER SHORT
 7. Structure each proof like the paper proof: named `have` steps, each with a
@@ -37,6 +38,11 @@
 ## REQUIRED LAYOUT
 11. One exercise per file: GraphCh10/Exercises/Supp08.lean, Review03.lean, ...
     Theorem names: supp08, supp09a, review03. Docstring = the book's problem text.
-12. Use the Lean LSP tools to iterate until zero errors and zero sorries.
+12. During statement formalization, sorry is permitted ONLY when an exercise is designated UNFINISHED. When an exercise is marked complete, its proof and all dependencies must be free of sorry and unapproved axioms. The final project MUST contain NO sorry.
 13. For "prove or disprove" or "find" problems: tell me the answer and why BEFORE writing Lean.
 14. Before attempting any proof, present the Lean theorem statement alongside a precise English translation. Preserve ALL original hypotheses, quantifiers, and conclusions. Do NOT strengthen assumptions, weaken conclusions, or replace an exercise with a special case without explicit approval. Classify partial formalizations separately from complete solutions.
+15. The first line of every exercise file is its status: `-- STATUS: UNFINISHED`,
+    `-- STATUS: PARTIAL` (an approved special case, fully proved) or
+    `-- STATUS: COMPLETE`. New files start UNFINISHED. Only I change a status to
+    PARTIAL or COMPLETE; when you think one is ready, tell me. Exercise files never
+    import other exercise files.
