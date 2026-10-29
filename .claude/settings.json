@@ -4,15 +4,10 @@
       "WebSearch",
       "WebFetch",
       "Edit(./CLAUDE.md)",
-      "Write(./CLAUDE.md)",
       "Edit(./allowed-imports.txt)",
-      "Write(./allowed-imports.txt)",
       "Edit(./approved-axioms.txt)",
-      "Write(./approved-axioms.txt)",
       "Edit(./check.ps1)",
-      "Write(./check.ps1)",
       "Edit(./.claude/settings.json)",
-      "Write(./.claude/settings.json)",
       "Read(./.lake/packages/mathlib/Mathlib/Combinatorics/**)"
     ]
   }
