@@ -6,4 +6,5 @@ import GraphCh10.DefinitionTests
 import GraphCh10.Exercises.Supp08
 import GraphCh10.Exercises.Supp09a
 import GraphCh10.Exercises.Supp10b
+import GraphCh10.Exercises.Supp28
 import GraphCh10.Exercises.Supp41
