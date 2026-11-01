@@ -40,10 +40,13 @@ Run (from the project root):
         # headless self-test: drives the explorer through every walkthrough step,
         # simulates mouse clicks, and saves one PNG per step into DIR
 
+Every mode first runs the checks and re-saves visualizations/supp08.png.
+
 Explorer controls:
     click a vertex          show how its degree is counted (its incident edges turn gold)
     − / +  buttons          remove / add a parallel copy of the edge {0,1}, {0,2} or {1,2}
-    Loop at 0               add or remove a loop at vertex 0 (then it is no longer a multigraph)
+    loop at 0 / 1 / 2       add or remove a loop at that vertex (then it is no longer a multigraph)
+    Hide / Show degrees     hide every computed degree, predict them, then check
     Reset to ex8            restore the counterexample used by the Lean proof
     ◀ Previous / Next ▶     move through the walkthrough (also ← / → keys)
     Next example            show another vertex / pair for the current step
@@ -265,7 +268,7 @@ def to_networkx(ends_map: dict) -> nx.MultiGraph:
 
 POS: dict[int, tuple[float, float]] = {0: (0.0, 0.0), 1: (2.0, 1.6), 2: (4.0, 0.0)}
 BADGE_OFF: dict[int, tuple[float, float]] = {0: (0.0, -0.62), 1: (0.0, 0.64), 2: (0.0, -0.62)}
-LOOP_DIR: dict[int, tuple[float, float]] = {0: (-1.0, 0.0), 1: (-0.8, 0.6), 2: (1.0, 0.0)}
+LOOP_DIR: dict[int, tuple[float, float]] = {0: (-1.0, 0.0), 1: (-0.98, 0.2), 2: (1.0, 0.0)}
 
 COLOR_VERTEX = "#3B6FB6"   # blue vertex fill
 COLOR_PARALLEL = "#E08A2C"  # orange: parallel edges (same ends as another edge)
@@ -285,7 +288,16 @@ def parallel_rad(ends_map: dict, e: str) -> float:
     """Curvature for edges sharing the same ends, so parallel edges are drawn apart."""
     group = [x for x in ends_map if ends_map[x] == ends_map[e]]
     k, m = group.index(e), len(group)
-    return (k - (m - 1) / 2) * 0.42
+    if m <= 2:  # one or two copies: symmetric about the straight segment
+        return (k - (m - 1) / 2) * 0.42
+    # Three or more copies: fan them OUTWARD only, so they do not cross the other edges
+    # inside the triangle. arc3 bends towards rad · (dy, -dx); pick the outward sign.
+    a, b = sorted(ends_map[e])
+    (x1, y1), (x2, y2) = POS[a], POS[b]
+    cx = sum(p[0] for p in POS.values()) / len(POS)
+    cy = sum(p[1] for p in POS.values()) / len(POS)
+    out = (y2 - y1) * ((x1 + x2) / 2 - cx) - (x2 - x1) * ((y1 + y2) / 2 - cy)
+    return (1 if out > 0 else -1) * k * 0.36
 
 
 def default_edge_color(ends_map: dict, e: str) -> str:
@@ -334,9 +346,10 @@ def draw_edges(ax, ends_map: dict, edge_colors: dict[str, str] | None = None,
 
 def draw_vertices(ax, ends_map: dict, tags: dict[int, str] | None = None,
                   badges: bool = True, dup: frozenset[int] = frozenset(),
-                  r: float = NODE_R, fontsize: float = 15) -> None:
+                  r: float = NODE_R, fontsize: float = 15, hidden: bool = False) -> None:
     """Vertices with their names; `badges` adds a 'deg = k' label; `dup` vertices (sharing a
-    degree with another vertex) get a red badge; `tags` adds a gold halo + tag."""
+    degree with another vertex) get a red badge; `tags` adds a gold halo + tag. With
+    `hidden`, badges read 'deg = ?' so a learner can predict the degree first."""
     tags = tags or {}
     for v in V:
         x, y = POS[v]
@@ -349,12 +362,17 @@ def draw_vertices(ax, ends_map: dict, tags: dict[int, str] | None = None,
                 color="white", zorder=5)
         if badges:
             dx, dy = BADGE_OFF[v]
-            bad = v in dup
-            ax.text(x + dx, y + dy, f"deg = {deg(ends_map, v)}", ha="center", va="center",
-                    fontsize=fontsize * 0.72, fontweight="bold", zorder=6,
-                    color=COLOR_WARN if bad else "#1B4D2C",
-                    bbox=dict(boxstyle="round,pad=0.25", fc="#FBE3E3" if bad else "#E3F3E8",
-                              ec=COLOR_WARN if bad else COLOR_OK))
+            bad = v in dup and not hidden
+            label = "deg = ?" if hidden else f"deg = {deg(ends_map, v)}"
+            if hidden:  # neutral: the colour must not reveal whether a degree repeats
+                fg, fc, ec = "#444444", "#EEEEEE", "#999999"
+            elif bad:
+                fg, fc, ec = COLOR_WARN, "#FBE3E3", COLOR_WARN
+            else:
+                fg, fc, ec = "#1B4D2C", "#E3F3E8", COLOR_OK
+            ax.text(x + dx, y + dy, label, ha="center", va="center",
+                    fontsize=fontsize * 0.72, fontweight="bold", zorder=6, color=fg,
+                    bbox=dict(boxstyle="round,pad=0.25", fc=fc, ec=ec))
         if v in tags:
             ax.text(x - r - 0.22, y, tags[v], ha="right", va="center", fontsize=11,
                     fontweight="bold", color="#5A4500", zorder=6,
@@ -404,7 +422,8 @@ def build_figure(stats: dict) -> plt.Figure:
     fig.text(0.5, 0.937,
              "Here one example IS the whole proof: a single multigraph that breaks a "
              "\"for every\" statement disproves it.  "
-             "Run  python visualizations/supp08.py  for the interactive walkthrough.",
+             "Run  py visualizations/supp08.py  (any Python with matplotlib + networkx) "
+             "for the interactive walkthrough.",
              ha="center", fontsize=10.5, color=COLOR_WARN, style="italic")
 
     # Row 0: the counterexample, then how each degree is counted.
@@ -470,15 +489,17 @@ def build_figure(stats: dict) -> plt.Figure:
         draw_vertices(ax, m, dup=dup_vertices(m), r=0.36, fontsize=11)
         frame(ax, (-1.0, 5.0), (-1.2, 2.6))
         pairs = equal_degree_pairs(m)
-        ax.set_title(f"deg {pairs[0][0]} = deg {pairs[0][1]}", fontsize=9.5, color=COLOR_WARN,
-                     pad=2)
+        ax.set_title(f"vertices {pairs[0][0]} and {pairs[0][1]}: same degree", fontsize=9.5,
+                     color=COLOR_WARN, pad=2)
     ax0 = fig.add_subplot(gs[1, 2:], frameon=False)
     ax0.set_xticks([])
     ax0.set_yticks([])
     ax0.set_title("Why the parallel edge matters: all 8 SIMPLE graphs on 3 vertices",
-                  fontsize=13, fontweight="bold", pad=22)
-    ax0.text(0.5, 1.015, "without parallel edges every one of them repeats a degree (red); "
-             f"checked for all {stats['n_simple']:,} simple graphs on 2 to 5 vertices",
+                  fontsize=13, fontweight="bold", pad=40)
+    ax0.text(0.5, 1.015, "Pigeonhole: n vertices, possible degrees 0..n−1, but 0 and n−1 cannot "
+             "both occur, so only n−1 values remain for n vertices.\n"
+             f"Checked by this script for all {stats['n_simple']:,} labelled simple graphs on 2 to 5 "
+             "vertices (the general argument is not formalized in this project).",
              transform=ax0.transAxes, ha="center", va="bottom", fontsize=9.5, color="#444444")
 
     # Row 2: proof correspondence.
@@ -500,8 +521,8 @@ def build_figure(stats: dict) -> plt.Figure:
              "• the degrees match the Lean line  have hDeg : ...  and NetworkX's degree",
              "• ex8 has no loops, 3 ≥ 2 vertices, and pairwise different degrees",
              "• on 2 vertices every multigraph has equal degrees, and every 3-vertex",
-             f"  counterexample has ≥ 3 edges ({stats['n_three']} with exactly 3): ex8 is minimal",
-             "• every simple graph on 2..5 vertices repeats a degree"]
+             f"  counterexample has ≥ 3 edges ({stats['n_three']} edge multisets with exactly 3)",
+             "• every labelled simple graph on 2..5 vertices repeats a degree (pigeonhole)"]
     for x, lines, w in ((0.015, left, 0.56), (0.6, right, 0.39)):
         ax.text(x, 0.92, lines[0], transform=ax.transAxes, fontsize=11.5, fontweight="bold",
                 va="top", color=COLOR_TEXT)
@@ -575,7 +596,30 @@ EDITED = ("⚠ You have edited the graph, so it is no longer ex8. The Lean proof
 
 def _deg_list(ex) -> str:
     d = ex.degs
-    return ", ".join(f"deg({v}) = {d[v]}" for v in V)
+    return ", ".join(f"deg({v}) = {'?' if ex.hidden else d[v]}" for v in V)
+
+
+# Lean goal states shown in the "Lean's goal" box. They were captured from Lean's infoview
+# (the lean_goal tool on GraphCh10/Exercises/Supp08.lean) and abbreviated: the long
+# hypothesis `claim` is written `claim : ∀ (V E : Type) …` and earlier facts are summarized.
+# They always describe ex8 (the Lean proof is only about ex8), so they use EX8_DEG.
+GOAL_INTRO_BEFORE = ("⊢ ¬∀ (V E : Type) [Fintype V] [Fintype E] [DecidableEq V] (G : UGraph V E),\n"
+                     "      G.IsMultigraph → 2 ≤ Fintype.card V → ∃ u w, u ≠ w ∧ G.deg u = G.deg w")
+
+
+def _goal_pair(f) -> list[str]:
+    u, w = f["u"], f["w"]
+    lines = ["after intro u w hne:   u w : Fin 3    hne : u ≠ w    ⊢ ex8.deg u ≠ ex8.deg w",
+             "after obtain:          h0 : ex8.deg 0 = {0}   h1 : ex8.deg 1 = {1}   "
+             "h2 : ex8.deg 2 = {2}".format(EX8_DEG[0], EX8_DEG[1], EX8_DEG[2]),
+             f"in case | {u}, {w}:        hne : {u} ≠ {w}    ⊢ ex8.deg {u} ≠ ex8.deg {w}"]
+    if u == w:
+        lines.append(f"exact absurd rfl hne:  rfl : {u} = {u} and hne : ¬({u} = {u}) contradict"
+                     "  →  no goals")
+    else:
+        lines += [f"after rw [h{u}, h{w}]:     ⊢ {EX8_DEG[u]} ≠ {EX8_DEG[w]}",
+                  "after decide:          no goals"]
+    return lines
 
 
 STEPS: list[dict] = [
@@ -585,187 +629,244 @@ STEPS: list[dict] = [
         math=lambda ex, f: (
             "A graph has vertices (the blue circles 0, 1, 2) and edges (the lines e0, e1, "
             "e2). Each edge has a set of endpoints: e0 joins 0 and 1, while e1 and e2 both "
-            "join 1 and 2. This is the graph the Lean proof uses, called ex8. It is read "
-            "straight from the Lean file, not typed in by hand."),
-        lean=("`structure UGraph (V E)` has one field, `ends : E → Sym2 V`, which gives every "
-              "edge its set of endpoints. In `ex8` the vertices are `Fin 3` = {0, 1, 2} and "
-              "the edges are also `Fin 3`. `fun e => if e = 0 then s(0, 1) else s(1, 2)` "
-              "says: edge 0 has ends {0, 1}; every other edge (1 and 2) has ends {1, 2}."),
+            "join 1 and 2. This graph is called ex8; it is read from the Lean file. "
+            "The degrees are hidden ('deg = ?') until you work them out in step 3."),
+        lean=("`structure UGraph (V E)` has one field, `ends`, giving each edge its endpoints. "
+              "`Sym2 V` means 'an unordered pair of vertices', written s(u, w), so "
+              "s(0, 1) = s(1, 0). `Fin 3` is the type {0, 1, 2}: ex8 has vertices 0, 1, 2 and "
+              "edges 0, 1, 2 (drawn as e0, e1, e2). `if e = 0 then s(0, 1) else s(1, 2)`: "
+              "edge 0 joins 0 and 1, every other edge joins 1 and 2."),
     ),
     dict(
         part="Part 1 · Graph basics", title="Parallel edges and loops: what a multigraph is",
-        code="defs", anchors=["def IsLoop", "def IsMultigraph"], focus="parallel",
+        code="defs", anchors=["def IsLoop (e : E)", "def IsMultigraph"], focus="parallel",
         math=lambda ex, f: (
-            "Two different edges with the same endpoints are called parallel (or multiple) "
-            "edges: here e1 and e2 (gold, orange elsewhere). A loop is an edge from a vertex "
-            "to itself. A multigraph may have parallel edges but NO loops. So ex8 is a "
-            "multigraph. Simple graphs allow neither, so ex8 is not a simple graph."),
-        lean=("`def IsLoop (e : E) : Prop := (G.ends e).IsDiag`: the endpoint set has one "
-              "element, like s(v, v). `def IsMultigraph : Prop := ∀ e : E, ¬ G.IsLoop e`: "
-              "no edge is a loop. Nothing forbids parallel edges, because two edges may have "
-              "the same `ends`."),
+            "Parallel (or multiple) edges are different edges with the same endpoints: here "
+            "e1 and e2 (gold now, orange in other steps). A loop joins a vertex to itself. "
+            "A multigraph may have parallel edges but no loops. A simple graph has neither. "
+            "So ex8 is a multigraph but not a simple graph."),
+        lean=("`IsLoop e := (G.ends e).IsDiag`: `IsDiag` means both ends are the same vertex, "
+              "as in s(v, v). `IsMultigraph := ∀ e : E, ¬ G.IsLoop e` reads 'for every edge e, "
+              "e is not a loop' (`¬` = not). Nothing forbids two edges with equal `ends`, so "
+              "parallel edges are allowed."),
     ),
     dict(
         part="Part 1 · Graph basics", title="The degree of a vertex",
-        code="defs", anchors=["def Incident", "def deg", "G.Incident e v)).card",
-                              "s(v, v))).card"], focus="degree",
+        code="defs", anchors=["def Incident", ("def deg", 3)], focus="degree",
         math=lambda ex, f: (
             "The degree of v is the number of edges touching v, with loops counted twice. "
-            f"Gold: the edges counted for v = {f['v']}. {deg_formula(ex.ends, f['v'])}. "
-            "Each parallel edge counts separately, so the two copies of {1, 2} give vertex 1 "
-            "two of its three. Click a vertex or press 'Next example'."),
-        lean=("`deg v` adds two counts. `(Finset.univ.filter (fun e => G.Incident e v)).card` "
-              "is the number of edges e with v ∈ ends e. The second summand counts the "
-              "loops at v once more. `Finset.univ` is the finite set of all edges, which "
-              "is why `[Fintype E]` is needed."),
+            "Each parallel edge is a separate edge, so each one counts. "
+            + ("Predict first: count the edges at each vertex yourself, then press "
+               "'Show degrees' to check. " if ex.hidden else
+               "To practise again, press 'Hide degrees'. ") +
+            f"Gold: the edges counted for v = {f['v']}. "
+            f"{ex.formula(f['v'])}. Click a vertex or press 'Next example'."),
+        lean=("`deg v` adds two counts. `Finset.univ.filter (fun e => G.Incident e v)` is "
+              "'the set of all edges e with v as an endpoint' (`Finset.univ` = all edges, "
+              "`filter` keeps those passing the test), and `.card` is its size. The second "
+              "count adds each loop at v once more. `[Fintype E]` says there are finitely "
+              "many edges, so these counts make sense."),
     ),
     dict(
         part="Part 1 · Graph basics", title="Try it: edit the graph",
-        code="defs", anchors=["def deg"], focus=None,
+        code="defs", anchors=[("def deg", 3)], focus=None,
         math=lambda ex, f: (
-            "Use the − / + buttons to remove or add copies of an edge, and watch the "
-            "degrees and the panel below the graph update. Try removing one copy of {1, 2}: "
-            "the degrees become 1, 2, 1 and a degree repeats. Try adding a loop at 0: the "
-            "graph stops being a multigraph. Can you find a different counterexample? "
-            f"Right now: {_deg_list(ex)}."),
-        lean=("Nothing in this step is Lean: the panel recomputes `IsMultigraph` and `deg` "
-              "from the edges, exactly as the definitions say. 'Reset to ex8' brings back "
+            "Use − / + to remove or add copies of an edge and watch the degrees and the "
+            "panel below the graph update. Remove one copy of {1, 2}: the degrees become "
+            "1, 2, 1 and a degree repeats. Add a loop: the graph is no longer a multigraph. "
+            f"Can you find another counterexample? Right now: {_deg_list(ex)}."),
+        lean=("This step uses no Lean. The panel recomputes `IsMultigraph` and `deg` from "
+              "the edges, following the definitions on the right. 'Reset to ex8' restores "
               "the graph used by the proof."),
     ),
     dict(
         part="Part 1 · Graph basics", title="The claim, and how to disprove it",
-        code="proof", anchors=["¬ ∀ (V E : Type)", "G.IsMultigraph → 2 ≤ Fintype.card V →",
+        code="proof", anchors=["¬ ∀ (V E : Type)", "(G : UGraph V E),",
+                               "G.IsMultigraph → 2 ≤ Fintype.card V →",
                                "∃ u w : V, u ≠ w ∧ G.deg u = G.deg w"], focus=None,
+        goal=lambda ex, f: ["the goal at the start of the proof:", GOAL_INTRO_BEFORE],
         math=lambda ex, f: (
-            "The claim says: EVERY finite multigraph with at least two vertices has two "
-            "different vertices of the same degree. A 'for every' statement is false as soon "
-            "as ONE case breaks it. Such a case is called a counterexample. ex8 is one: it "
-            "is a finite multigraph, it has 3 ≥ 2 vertices, and its degrees 1, 3, 2 are all "
-            "different. (Without parallel edges the claim would be true; see Part 3.)"),
-        lean=("We prove the NEGATION `¬ ∀ …` of the claim. `∀ (V E : Type)` ranges over all "
-              "vertex and edge types; `[Fintype V] [Fintype E]` say they are finite, and "
-              "`[DecidableEq V]` lets Lean compute degrees. `→` chains the hypotheses, "
-              "and `∃ u w : V, u ≠ w ∧ …` is the conclusion we will show fails for ex8."),
+            "The claim: EVERY finite multigraph with at least two vertices has two different "
+            "vertices of the same degree. A 'for every' statement is false as soon as ONE "
+            "example breaks it; that example is a counterexample. ex8 is one: a finite "
+            "multigraph with 3 ≥ 2 vertices whose degrees 1, 3, 2 are all different."),
+        lean=("The theorem states the NEGATION `¬ ∀ …` of the claim. `∀ (V E : Type)` ranges "
+              "over all vertex and edge types. The square-bracket arguments are filled in "
+              "by Lean automatically: `[Fintype V]` = V is finite, `[DecidableEq V]` = Lean "
+              "can test u = w, which it needs to count. The arrows `→` list the hypotheses, "
+              "and `∃ u w : V, u ≠ w ∧ …` reads 'there are u, w with u ≠ w and …'."),
     ),
     dict(
         part="Part 2 · The Lean proof", title="intro claim: assume the claim",
         code="proof", anchors=["intro claim", "assume, for contradiction"], focus=None,
+        goal=lambda ex, f: ["before:  " + GOAL_INTRO_BEFORE.replace("\n", "\n         "),
+                            "after:   claim : ∀ (V E : Type) … → ∃ u w, u ≠ w ∧ G.deg u = G.deg w",
+                            "         ⊢ False"],
         math=lambda ex, f: (
-            "To show a statement is false, assume it is true and derive a contradiction. "
+            "To prove 'not P': assume P and derive something impossible. "
             "So suppose every finite multigraph with at least two vertices has two vertices "
-            "of equal degree. Then use this assumption on ex8 and see it fail."),
-        lean=("In Lean, `¬ P` is defined as `P → False`. So `intro claim` assumes "
-              "`claim : ∀ V E …, …` and the goal becomes `False`. The rest of the proof "
-              "builds a proof of `False` from `claim`."),
+            "of equal degree. We will apply this to ex8 and see it fail."),
+        lean=("In Lean, `¬ P` is by definition `P → False` ('P leads to something impossible'), "
+              "so no special contradiction rule is needed. "
+              "`intro claim` assumes P and calls it `claim`; the goal becomes `False`. In the "
+              "goal box, `⊢` marks what is still to prove and the lines above it are what we "
+              "may use."),
     ),
     dict(
         part="Part 2 · The Lean proof", title="have hMulti: ex8 is a multigraph",
-        code="proof", anchors=["have hMulti", "has no loops, so it is a multigraph",
-                               "unfold UGraph.IsMultigraph UGraph.IsLoop"], focus="edge",
+        code="proof", anchors=["has no loops, so it is a multigraph", ("have hMulti", 3)],
+        focus="edge",
+        goal=lambda ex, f: ["before:        ⊢ ex8.IsMultigraph",
+                            "after unfold:  ⊢ ∀ (e : Fin 3), ¬(ex8.ends e).IsDiag",
+                            "after decide:  no goals   (hMulti : ex8.IsMultigraph is now known)"],
         math=lambda ex, f: (
-            "Check every edge: it must join two DIFFERENT vertices. Right now the graph has "
-            "no edges at all, so there is no loop and it is a multigraph."
+            "Every edge must join two DIFFERENT vertices. The graph has no edges right now, "
+            "so there is no loop and it is a multigraph."
         ) if f["e"] is None else (
-            "Check every edge: it must join two DIFFERENT vertices. "
+            "Every edge must join two DIFFERENT vertices. "
             f"Gold: {f['e']} = {{{', '.join(map(str, sorted(ex.ends[f['e']])))}}}, "
-            f"{'a loop!' if is_loop(ex.ends, f['e']) else 'two different vertices, so not a loop'}. "
-            f"Is the whole graph a multigraph? {'yes' if is_multigraph(ex.ends) else 'NO'}. "
+            f"{'a loop!' if is_loop(ex.ends, f['e']) else 'two different vertices, not a loop'}. "
+            f"Whole graph a multigraph? {'yes' if is_multigraph(ex.ends) else 'NO'}. "
             "'Next example' shows the other edges."),
-        lean=("`have hMulti : ex8.IsMultigraph := by …` proves a fact and names it. `unfold` "
-              "replaces `IsMultigraph` and `IsLoop` by their definitions. The goal becomes "
-              "`∀ e : Fin 3, ¬ (ex8.ends e).IsDiag`, which talks about only finitely many edges. "
-              "`decide` then checks all three edges by computation, and Lean's kernel "
-              "re-checks the result."),
+        lean=("`have hMulti : ex8.IsMultigraph := by …` proves a fact and names it `hMulti`. "
+              "`unfold` replaces the names `IsMultigraph`, `IsLoop` by their definitions (see "
+              "the goal box). Why first? `decide` only works on statements Lean knows how to "
+              "check by computation; `IsMultigraph` is just a name, and after `unfold` the goal "
+              "is 'for every e in Fin 3, …', which `decide` checks for the 3 edges one by one. "
+              "Lean's kernel (its small, trusted checker) re-checks the computation."),
     ),
     dict(
         part="Part 2 · The Lean proof", title="have hCard: at least two vertices",
-        code="proof", anchors=["have hCard", "rw [Fintype.card_fin]",
-                               "it has three vertices, so at least two"], focus="card",
+        code="proof", anchors=["it has three vertices, so at least two", ("have hCard", 3)],
+        focus="card",
+        goal=lambda ex, f: ["before:                  ⊢ 2 ≤ Fintype.card (Fin 3)",
+                            "after rw [card_fin]:     ⊢ 2 ≤ 3",
+                            "after decide:            no goals   (hCard is now known)"],
         math=lambda ex, f: (
-            "Count the vertices: 0, 1, 2, so there are 3 of them, and 2 ≤ 3. "
-            "So ex8 satisfies the second hypothesis of the claim."),
-        lean=("`Fintype.card (Fin 3)` is the number of elements of `Fin 3`. "
-              "`rw [Fintype.card_fin]` rewrites it to `3` using the library lemma "
-              "`Fintype.card (Fin n) = n`. The goal is now `2 ≤ 3`, and `decide` checks "
-              "that by computation."),
+            "Count the vertices: 0, 1, 2. There are 3, and 2 ≤ 3, so ex8 meets the second "
+            "hypothesis of the claim."),
+        lean=("`Fintype.card (Fin 3)` is the number of elements of `Fin 3`. `rw [Fintype."
+              "card_fin]` rewrites with the library fact `Fintype.card (Fin n) = n`, so the "
+              "goal becomes `2 ≤ 3`. `decide` checks `2 ≤ 3` by computation."),
     ),
     dict(
         part="Part 2 · The Lean proof", title="have hDeg: the three degrees",
-        code="proof", anchors=["have hDeg", "its degrees are deg(0) = 1"], focus="degree",
+        code="proof", anchors=["its degrees are deg(0) = 1", ("have hDeg", 2)], focus="degree",
+        goal=lambda ex, f: ["before:        ⊢ " + " ∧ ".join(f"ex8.deg {v} = {EX8_DEG[v]}"
+                                                          for v in V),
+                            "after decide:  no goals   (hDeg is now known)"],
         math=lambda ex, f: (
-            f"Count the edges touching each vertex. {deg_formula(ex.ends, f['v'])}. "
-            "For ex8: deg(0) = 1, deg(1) = 3 (e0 plus both parallel edges), deg(2) = 2. "
-            "'Next example' or a click shows the other vertices."),
-        lean=("The statement `ex8.deg 0 = 1 ∧ ex8.deg 1 = 3 ∧ ex8.deg 2 = 2` joins three "
-              "equations with `∧` (and). Each `deg` is a size of a filtered finite set of "
-              "edges, so `decide` can count it directly. No graph theory is needed, only "
-              "computation, which the kernel checks."),
+            f"Count the edges at each vertex. {ex.formula(f['v'])}. In ex8: deg(0) = 1, "
+            "deg(1) = 3 (e0 and both parallel edges), deg(2) = 2. 'Next example' or a click "
+            "shows the other vertices."),
+        lean=("`A ∧ B` means 'A and B', so the statement is three equations at once. Each "
+              "`deg` is the size of a filtered finite set of edges, so `decide` simply counts: "
+              "it evaluates `ex8.deg 0` to 1, and so on, and the kernel re-checks the counting."),
     ),
     dict(
         part="Part 2 · The Lean proof", title="have hDistinct: different vertices, different degrees",
         code="proof", anchors=["have hDistinct", "intro u w hne", "obtain ⟨h0, h1, h2⟩ := hDeg",
                                "match u, w with"],
         dyn_anchor=lambda f: f"| {f['u']}, {f['w']} =>", focus="pair",
+        goal=lambda ex, f: _goal_pair(f),
         math=lambda ex, f: (
             "Check every pair (u, w) of vertices. "
-            + (f"Here u = w = {f['u']}: this case is impossible, because we assumed u ≠ w."
+            + (f"Here u = w = {f['u']}: this case cannot happen, because we assumed u ≠ w."
                if f['u'] == f['w'] else
                f"Here u = {f['u']}, w = {f['w']}: deg u = {ex.degs[f['u']]}, "
                f"deg w = {ex.degs[f['w']]}, "
-               + ("different. ✓" if ex.degs[f['u']] != ex.degs[f['w']]
-                  else "EQUAL, so this graph is not a counterexample.")) +
-            f" (case {f['k'] + 1} of 9; 'Next example' shows the next case.)"),
-        lean=("`intro u w hne` takes vertices u, w and `hne : u ≠ w`. `obtain ⟨h0, h1, h2⟩ := "
-              "hDeg` splits the ∧ into three equations. `match u, w with` lists all 9 cases. "
-              "When u = w, `absurd rfl hne` notes that `rfl : u = u` contradicts `hne`. "
-              "Otherwise `rw [h0, h1]` turns `ex8.deg 0 ≠ ex8.deg 1` into `1 ≠ 3`, and "
-              "`decide` checks it."),
+               + ("different ✓." if ex.degs[f['u']] != ex.degs[f['w']]
+                  else "EQUAL, so this edited graph is not a counterexample.")) +
+            f" (Case {f['k'] + 1} of 9; 'Next example' shows the next one.)"),
+        lean=("`intro u w hne` takes any u, w and the assumption `hne : u ≠ w`. `obtain ⟨h0, "
+              "h1, h2⟩ := hDeg` splits the 'and' into three equations (⟨ ⟩ are ANGLE "
+              "brackets, not parentheses; they take apart ∧ and ∃). `match u, w with` tries all 9 value "
+              "pairs and substitutes them everywhere, so `hne` becomes e.g. `0 ≠ 0`. "
+              "`absurd h hn` proves anything from `h : A` and `hn : ¬A`; with `rfl : 0 = 0` it "
+              "closes the impossible cases. Otherwise `rw` replaces degrees by numbers and "
+              "`decide` checks e.g. `1 ≠ 3`."),
     ),
     dict(
         part="Part 2 · The Lean proof", title="obtain … := claim … ex8: use the claim on ex8",
         code="proof", anchors=["obtain ⟨u, w, hne, hEq⟩ := claim", "applied to `ex8`"],
         focus="claim",
+        goal=lambda ex, f: ["before:  (claim, hMulti, hCard, hDeg, and hDistinct : ∀ (u w : Fin 3), "
+                            "u ≠ w → ex8.deg u ≠ ex8.deg w)   ⊢ False",
+                            "after:   (all of those, plus)  u w : Fin 3   hne : u ≠ w   "
+                            "hEq : ex8.deg u = ex8.deg w",
+                            "         ⊢ False"],
         math=lambda ex, f: (
-            "The assumed claim holds for EVERY multigraph, so in particular for ex8. "
-            "We have just checked its hypotheses (hMulti, hCard). So the claim promises "
-            "two vertices u ≠ w with deg u = deg w. The question marks show what it promises. "
-            "But ex8 has no such pair."),
-        lean=("`claim (Fin 3) (Fin 3) ex8 hMulti hCard` plugs ex8 into the ∀. The `[Fintype …]` "
-              "and `[DecidableEq …]` arguments are found automatically, and the two "
-              "hypotheses are given as proofs. The result is `∃ u w, u ≠ w ∧ ex8.deg u = "
-              "ex8.deg w`. `obtain ⟨u, w, hne, hEq⟩` names its parts."),
+            "The assumed claim is about EVERY multigraph, so it applies to ex8, whose "
+            "hypotheses we checked (hMulti, hCard). It promises two vertices u ≠ w with "
+            "deg u = deg w; the question marks show the promise. But ex8 has no such pair."),
+        lean=("`claim (Fin 3) (Fin 3) ex8 hMulti hCard` plugs ex8 into the ∀, like calling a "
+              "function. The square-bracket arguments are found automatically, and `hMulti`, "
+              "`hCard` are passed as the two hypotheses. The result is `∃ u w, u ≠ w ∧ "
+              "ex8.deg u = ex8.deg w`; `obtain ⟨u, w, hne, hEq⟩` (angle brackets) names its "
+              "four parts: the two vertices and the two facts."),
     ),
     dict(
         part="Part 2 · The Lean proof", title="exact hDistinct u w hne hEq: contradiction ∎",
         code="proof", anchors=["-- contradiction", "exact hDistinct u w hne hEq"], focus=None,
+        goal=lambda ex, f: ["before:  hne : u ≠ w    hEq : ex8.deg u = ex8.deg w    "
+                            "hDistinct : … → ex8.deg u ≠ ex8.deg w    ⊢ False",
+                            "after:   no goals: the proof is complete ∎"],
         math=lambda ex, f: (
-            "hDistinct says the two degrees are different; the claim says they are equal. "
-            "Both cannot hold, so the assumption was false: the claim is disproved. "
-            "ex8 is a finite multigraph with at least two vertices in which all degrees are "
-            "different."),
-        lean=("`hDistinct u w hne : ex8.deg u ≠ ex8.deg w`, and `≠` means `(… = …) → False`. "
-              "Applying it to `hEq : ex8.deg u = ex8.deg w` gives `False`, which is the goal. "
-              "`exact` closes it, and Lean's kernel re-checks the whole proof."),
+            "hDistinct says the two degrees are different; the claim said they are equal. "
+            "Both cannot be true, so the assumption was false and the claim is disproved."),
+        lean=("`hDistinct u w hne` has type `ex8.deg u ≠ ex8.deg w`, and `a ≠ b` means "
+              "`a = b → False`. Applying it to `hEq : ex8.deg u = ex8.deg w` gives `False`, "
+              "exactly the goal. `exact` closes it and the kernel re-checks the whole proof."),
     ),
     dict(
-        part="Part 3 · Why this works", title="One counterexample is a complete proof",
+        part="Part 3 · Why this works", title="Checking one example vs. proving 'for every'",
         code="proof", anchors=[], focus=None,
         math=lambda ex, f: (
-            "In Exercise 9(a) a picture could only illustrate a 'for every' theorem. Here "
-            "the situation is reversed: one picture of ex8 really DISPROVES the claim. "
-            "Why are parallel edges essential? Without them, a vertex adjacent to all others "
-            "and a vertex with no edges cannot both exist, so some degree must repeat. "
-            f"This script checked all {ex.stats['n_simple']:,} simple graphs on 2 to 5 "
-            "vertices: each one repeats a degree. With 2 vertices any multigraph has equal "
-            "degrees, and every 3-vertex counterexample needs at least 3 edges, so ex8 is "
-            "as small as possible."),
-        lean=("`#print axioms GraphCh10.supp08` reports only Lean's standard axioms propext, "
-              "Classical.choice and Quot.sound: no `sorry` and no project axioms. Every "
-              "`decide` is a computation checked by the kernel; no `native_decide` is used."),
+            "To PROVE a 'for every' statement, checking examples is never enough: there are "
+            "infinitely many graphs, so you need an argument that covers all of them at once. "
+            "To DISPROVE one, a single counterexample is enough. That is why this proof only "
+            "looks at ex8, and why it is still a complete answer."),
+        lean=("The Lean proof never inspects any graph except ex8: every fact it checks is "
+              "about ex8 or about small numbers like 2 ≤ 3. At the last build, `#print axioms "
+              "GraphCh10.supp08` (GraphCh10/Verification/Verify08.lean) reported only Lean's "
+              "standard axioms propext, Classical.choice and Quot.sound: no `sorry`, no project "
+              "axioms, no `native_decide`. Re-run that file to re-check."),
+    ),
+    dict(
+        part="Part 3 · Why this works", title="Why the parallel edge is essential (pigeonhole)",
+        code="proof", anchors=[], focus="simple",
+        math=lambda ex, f: (
+            "In a SIMPLE graph with n vertices each degree is between 0 and n − 1 (n "
+            "possible values). Degrees 0 and n − 1 cannot both occur: a vertex of degree "
+            "n − 1 touches every other vertex, so none has degree 0. Then n vertices share "
+            "at most n − 1 values, so two must be equal (pigeonhole). A parallel edge lets "
+            "deg(1) reach 3 = n, escaping this. 'Next example' shows all 8 simple graphs on "
+            "3 vertices, each with a repeated degree (red). Also, ex8 is as small as possible: "
+            "with 2 vertices both degrees are always equal, and every 3-vertex counterexample "
+            "has at least 3 edges."),
+        lean=lambda ex: (
+            "This step is NOT formalized in the project; it explains why the counterexample "
+            f"needs a parallel edge. The script checks it on all {ex.stats['n_simple']:,} "
+            "labelled simple graphs with 2 to 5 vertices. Minimality is checked on every "
+            "multigraph with at most 3 copies of each pair (enough, since 2 edges use at most "
+            "2 copies) and, on 2 vertices, up to 4 copies (there deg 0 = deg 1 always)."),
     ),
 ]
 
 PAIR_KEYS = [("01", 0, 1), ("02", 0, 2), ("12", 1, 2)]
+
+
+def highlighted_lines(src: list[str], anchors) -> set[int]:
+    """Indices of the source lines to highlight. An anchor is a substring that must occur on
+    exactly one line, or a pair (substring, n) meaning that line and the n − 1 lines after it
+    (used to highlight a whole `have … := by` block, including its `decide` line)."""
+    idx: set[int] = set()
+    for a in anchors:
+        sub, n = (a, 1) if isinstance(a, str) else a
+        hits = [i for i, ln in enumerate(src) if sub in ln]
+        assert len(hits) == 1, f"anchor {sub!r} matches {len(hits)} lines"
+        idx.update(range(hits[0], min(len(src), hits[0] + n)))
+    return idx
 
 
 # ---------------------------------------------------------------------------
@@ -782,6 +883,9 @@ class Explorer:
         self.ends: dict[str, frozenset[int]] = dict(EX8_ENDS)
         self.step = 0
         self.example_idx = 0
+        self.hidden = True  # degrees start hidden: predict first (steps 1-3), then check
+        self.revealed = False  # set once degrees have been shown
+        self.selected: int | None = None  # last clicked vertex
 
         for key in ("keymap.back", "keymap.forward"):  # free ← / → for the walkthrough
             plt.rcParams[key] = [k for k in plt.rcParams[key] if k not in ("left", "right")]
@@ -805,9 +909,11 @@ class Explorer:
         self.ax_legend = self.fig.add_axes([0.015, 0.29, 0.465, 0.07])
         self.ax_edit = self.fig.add_axes([0.015, 0.03, 0.165, 0.245])
         self.ax_sets = self.fig.add_axes([0.19, 0.03, 0.29, 0.245])
-        self.ax_text = self.fig.add_axes([0.505, 0.615, 0.48, 0.305])
-        self.ax_code = self.fig.add_axes([0.505, 0.105, 0.48, 0.5])
-        for ax in (self.ax_legend, self.ax_edit, self.ax_sets, self.ax_text, self.ax_code):
+        self.ax_text = self.fig.add_axes([0.505, 0.64, 0.48, 0.28])
+        self.ax_goal = self.fig.add_axes([0.505, 0.505, 0.48, 0.125])
+        self.ax_code = self.fig.add_axes([0.505, 0.105, 0.48, 0.39])
+        for ax in (self.ax_legend, self.ax_edit, self.ax_sets, self.ax_text, self.ax_goal,
+                   self.ax_code):
             ax.axis("off")
         self.fig.text(0.015, 0.905,
                       "Click a vertex to see how its degree is counted.   "
@@ -831,8 +937,11 @@ class Explorer:
                 [0.085, y, 0.04, 0.035], "−", lambda _e, a=a, b=b: self.remove_edge(a, b))
             self.edit_buttons["+" + key] = button(
                 [0.13, y, 0.04, 0.035], "+", lambda _e, a=a, b=b: self.add_edge(a, b))
-        self.btn_loop = button([0.017, 0.085, 0.153, 0.035], "Loop at 0: add / remove",
-                               lambda _e: self.toggle_loop(0), size=9.5)
+        self.loop_buttons = {
+            v: button([0.017 + 0.052 * v, 0.085, 0.049, 0.035], f"loop at {v}",
+                      lambda _e, v=v: self.toggle_loop(v), size=9)
+            for v in V}
+        self.btn_loop = self.loop_buttons[0]
         self.btn_reset = button([0.017, 0.04, 0.153, 0.035], "Reset to ex8",
                                 lambda _e: self.reset(), color="#E3EEDF", size=9.5)
 
@@ -841,6 +950,8 @@ class Explorer:
                                color="#E3EEDF")
         self.btn_example = button([0.795, 0.035, 0.09, 0.055], "Next example",
                                   lambda _e: self.next_example())
+        self.btn_hide = button([0.895, 0.035, 0.09, 0.055], "Show degrees",
+                               lambda _e: self.toggle_hidden(), color="#FFF4C2")
         self.step_label = self.fig.text(0.6425, 0.0625, "", ha="center", va="center",
                                         fontsize=11, fontweight="bold", color=COLOR_TEXT)
 
@@ -858,9 +969,7 @@ class Explorer:
             anchors = list(s["anchors"])
             if "dyn_anchor" in s:
                 anchors += [s["dyn_anchor"](dict(u=u, w=w)) for u, w in PAIRS]
-            for anchor in anchors:
-                n = sum(anchor in ln for ln in lines)
-                assert n == 1, f"anchor {anchor!r} matches {n} lines of the {s['code']} source"
+            highlighted_lines(lines, anchors)  # asserts each anchor is unique
 
     @property
     def degs(self) -> dict[int, int]:
@@ -871,7 +980,7 @@ class Explorer:
         return sorted(self.ends.values(), key=sorted) != sorted(EX8_ENDS.values(), key=sorted)
 
     def _set_edges(self, ends_list: list[frozenset[int]]) -> None:
-        self.ends = as_map(sorted(ends_list, key=lambda s: (len(s), sorted(s))))
+        self.ends = as_map(ends_list)  # keep the order, so existing edges keep their names
         self.redraw()
 
     def add_edge(self, a: int, b: int) -> None:
@@ -881,7 +990,7 @@ class Explorer:
     def remove_edge(self, a: int, b: int) -> None:
         lst = list(self.ends.values())
         if sym2(a, b) in lst:
-            lst.remove(sym2(a, b))
+            del lst[len(lst) - 1 - lst[::-1].index(sym2(a, b))]  # remove the LAST copy
             self._set_edges(lst)
 
     def toggle_loop(self, v: int) -> None:
@@ -896,6 +1005,19 @@ class Explorer:
         self.ends = dict(EX8_ENDS)
         self.redraw()
 
+    def toggle_hidden(self) -> None:
+        """Predict-then-check: hide every computed degree until the learner shows them."""
+        self.hidden = not self.hidden
+        self.revealed = self.revealed or not self.hidden
+        self.btn_hide.label.set_text("Show degrees" if self.hidden else "Hide degrees")
+        self.redraw()
+
+    def formula(self, v: int) -> str:
+        """How deg(v) is counted, or a prompt to predict it while degrees are hidden."""
+        if self.hidden:
+            return f"deg({v}) = ?   (count the gold edges yourself; a loop would count twice)"
+        return deg_formula(self.ends, v)
+
     def go(self, delta: int) -> None:
         self.enter_step(max(0, min(len(STEPS) - 1, self.step + delta)))
 
@@ -905,6 +1027,9 @@ class Explorer:
 
     def enter_step(self, k: int) -> None:
         self.step, self.example_idx = k, 0
+        if k >= 3 and not self.revealed:  # from step 4 on the proof needs the numbers
+            self.hidden, self.revealed = False, True
+            self.btn_hide.label.set_text("Hide degrees")
         self.redraw()
 
     # -- events -------------------------------------------------------------
@@ -920,7 +1045,7 @@ class Explorer:
         """Clicking a vertex shows its degree; on a 'degree' step it becomes the example."""
         self.selected = v
         if STEPS[self.step]["focus"] == "degree":
-            self.example_idx = V.index(v)
+            self.example_idx = (V.index(v) - 1) % len(V)
         self.redraw()
 
     def _on_key(self, event) -> None:
@@ -933,23 +1058,23 @@ class Explorer:
 
     def focus_info(self, kind: str | None) -> tuple[dict | None, int]:
         """What the current step highlights in gold / bold. Returns (info, #examples)."""
-        sel = getattr(self, "selected", None)
+        sel = self.selected
         if kind is None:
             if sel is None:
                 return None, 0
             inc = incident_edges(self.ends, sel)
             return dict(tags={sel: "v"}, edges={e: COLOR_FOCUS for e in inc},
-                        caption=deg_formula(self.ends, sel)), 0
+                        caption=self.formula(sel)), 0
         if kind == "parallel":
             par = [e for e in self.ends if default_edge_color(self.ends, e) == COLOR_PARALLEL]
             return dict(tags={}, edges={e: COLOR_FOCUS for e in par},
                         caption=("gold: parallel edges " + ", ".join(par)) if par
                         else "no parallel edges right now"), 1
-        if kind == "degree":
-            v = V[self.example_idx % len(V)]
+        if kind == "degree":  # start at vertex 1, where the parallel edges meet
+            v = V[(self.example_idx + 1) % len(V)]
             inc = incident_edges(self.ends, v)
             return dict(v=v, tags={v: "v"}, edges={e: COLOR_FOCUS for e in inc},
-                        emph=True, caption=deg_formula(self.ends, v)), len(V)
+                        emph=True, caption=self.formula(v)), len(V)
         if kind == "edge":
             names = list(self.ends)
             if not names:
@@ -969,13 +1094,25 @@ class Explorer:
             k = self.example_idx % len(PAIRS)
             u, w = PAIRS[k]
             d = self.degs
-            inc = set(incident_edges(self.ends, u)) | set(incident_edges(self.ends, w))
+            # gold = the edges counted in deg u and deg w; none for the impossible u = w
+            inc = (set() if u == w else
+                   set(incident_edges(self.ends, u)) | set(incident_edges(self.ends, w)))
             tags = {u: "u = w"} if u == w else {u: "u", w: "w"}
-            cap = (f"case | {u}, {w}:  u = w, excluded by hne : u ≠ w" if u == w else
+            cap = (f"case | {u}, {w}:  u = w, impossible because hne : u ≠ w" if u == w else
                    f"case | {u}, {w}:  deg u = {d[u]}, deg w = {d[w]}  →  "
-                   + ("different ✓" if d[u] != d[w] else "EQUAL ✗"))
+                   + ("different ✓" if d[u] != d[w] else "EQUAL ✗")
+                   + "   (gold: edges counted in deg u and deg w)")
             return dict(u=u, w=w, k=k, tags=tags, edges={e: COLOR_FOCUS for e in inc},
                         caption=cap), len(PAIRS)
+        if kind == "simple":
+            graphs = list(multigraphs_on(V, 1))
+            k = self.example_idx % len(graphs)
+            g = as_map(graphs[k])
+            a, b = equal_degree_pairs(g)[0]
+            return dict(graph=g, tags={a: "same", b: "same"}, edges={},
+                        caption=f"simple graph {k + 1} of {len(graphs)}: vertices {a} and {b} "
+                                f"both have degree {deg(g, a)}   (shown instead of ex8)"), \
+                len(graphs)
         if kind == "claim":
             pairs = equal_degree_pairs(self.ends)
             cap = ("the claim promises u ≠ w with deg u = deg w ... but no such pair exists"
@@ -989,27 +1126,35 @@ class Explorer:
     def redraw(self) -> None:
         s = STEPS[self.step]
         focus, n_examples = self.focus_info(s["focus"])
-        self._draw_graph(focus)
-        self._draw_sets()
+        shown = focus["graph"] if focus is not None and "graph" in focus else self.ends
+        self._draw_graph(focus, shown)
+        self._draw_sets(shown)
         self._draw_text(s, focus)
+        self._draw_goal(s, focus)
         self._draw_code(s, focus)
         self.step_label.set_text(f"Step {self.step + 1} / {len(STEPS)}")
         self.btn_example.ax.set_visible(n_examples > 1)
         self.fig.canvas.draw_idle()
 
-    def _draw_graph(self, focus: dict | None) -> None:
+    def _draw_graph(self, focus: dict | None, shown: dict) -> None:
         ax = self.ax_graph
         ax.clear()
-        caption = "The multigraph ex8" if not self.edited else "Your edited graph"
-        caption += "   (" + fmt_edges(self.ends) + ")" if self.ends else "   (no edges)"
+        if shown is not self.ends:
+            caption = "A simple graph (not ex8)"
+        else:
+            caption = "The multigraph ex8" if not self.edited else "Your edited graph"
+        caption += "   (" + fmt_edges(shown) + ")" if shown else "   (no edges)"
         edge_colors, emphasized, tags = {}, frozenset(), {}
         if focus is not None:
             edge_colors = focus["edges"]
             emphasized = frozenset(focus["edges"]) if focus.get("emph") else frozenset()
             tags = focus["tags"]
             caption = caption + "\n" + focus["caption"]
-        draw_edges(ax, self.ends, edge_colors, emphasized)
-        draw_vertices(ax, self.ends, tags, dup=dup_vertices(self.ends))
+            if (self.selected is not None and "v" not in focus and "graph" not in focus
+                    and STEPS[self.step]["focus"]):
+                caption += "\nclicked: " + self.formula(self.selected)
+        draw_edges(ax, shown, edge_colors, emphasized)
+        draw_vertices(ax, shown, tags, dup=dup_vertices(shown), hidden=self.hidden)
         self.caption.set_text(textwrap.fill(caption.split("\n")[0], 95) +
                               ("\n" + caption.split("\n", 1)[1] if "\n" in caption else ""))
         frame(ax)
@@ -1028,15 +1173,15 @@ class Explorer:
         self.ax_legend.legend(handles=handles, loc="center", ncol=4, frameon=False,
                               fontsize=9.5, handlelength=2.2, columnspacing=1.4)
 
-    def _draw_sets(self) -> None:
+    def _draw_sets(self, shown: dict) -> None:
         ax = self.ax_sets
         ax.clear()
         ax.axis("off")
         ax.add_patch(plt.Rectangle((0, 0), 1, 1, transform=ax.transAxes, facecolor="#F7F7F7",
                                    edgecolor="#D0D0D0"))
-        d = self.degs
-        multi = is_multigraph(self.ends)
-        pairs = equal_degree_pairs(self.ends)
+        d = degrees(shown)
+        multi = is_multigraph(shown)
+        pairs = equal_degree_pairs(shown)
 
         def mark(ok: bool) -> tuple[str, str]:
             return ("✓", COLOR_OK) if ok else ("✗", COLOR_WARN)
@@ -1044,9 +1189,11 @@ class Explorer:
         rows = [
             ("multigraph (no loops)?", *mark(multi)),
             (f"at least 2 vertices?  ({len(V)})", *mark(len(V) >= 2)),
-            ("degrees", "  ".join(f"{v}:{d[v]}" for v in V), COLOR_TEXT),
+            ("degrees", "  ".join(f"{v}:{'?' if self.hidden else d[v]}" for v in V),
+             COLOR_TEXT),
             ("pairs u ≠ w with equal degree",
-             ", ".join(f"({u},{w})" for u, w in pairs) if pairs else "none", COLOR_TEXT),
+             "?" if self.hidden else
+             (", ".join(f"({u},{w})" for u, w in pairs) if pairs else "none"), COLOR_TEXT),
         ]
         ax.text(0.04, 0.93, "Computed live from the edges", transform=ax.transAxes,
                 fontsize=10.5, fontweight="bold", va="top")
@@ -1057,7 +1204,12 @@ class Explorer:
             ax.text(0.66, y, val, transform=ax.transAxes,
                     fontsize=14 if val in ("✓", "✗") else 10.5, va="top",
                     family="DejaVu Sans Mono", color=col, fontweight="bold")
-        ce = is_counterexample(self.ends)
+        ce = is_counterexample(shown)
+        if self.hidden and multi:
+            ax.text(0.04, 0.17, "degrees hidden: predict them, then press 'Show degrees'",
+                    transform=ax.transAxes, fontsize=10, fontweight="bold", va="top",
+                    color="#5A4500")
+            return
         if ce:
             verdict = "✓ a counterexample: the claim fails here"
         elif not multi:
@@ -1074,7 +1226,12 @@ class Explorer:
         math = s["math"](self, focus)
         if self.edited and s["part"] != "Part 1 · Graph basics":
             math = EDITED + math
-        blocks = [("What it means", math), ("In Lean", s["lean"])]
+        lean = s["lean"](self) if callable(s["lean"]) else s["lean"]
+        def clean(t: str) -> str:
+            # backticks are Markdown, not shown; ZWNJ stops the 'fl'/'fi' ligature (rfl!)
+            return t.replace("`", "").replace("fl", "f\u200cl").replace("fi", "f\u200ci")
+
+        blocks = [("What it means", clean(math)), ("In Lean", clean(lean))]
 
         # Shrink the font until everything fits the panel.
         height_pt = ax.get_position().height * self.fig.get_figheight() * 72
@@ -1101,7 +1258,40 @@ class Explorer:
                     color=COLOR_TEXT, linespacing=1.42)
             y -= (len(lines) + 0.6) * line
 
+    def _draw_goal(self, s: dict, focus: dict | None) -> None:
+        """Lean's goal state before / after the tactics of this step (from the infoview)."""
+        ax = self.ax_goal
+        ax.clear()
+        ax.axis("off")
+        ax.add_patch(plt.Rectangle((0, 0), 1, 1, transform=ax.transAxes, facecolor="#F1F5FB",
+                                   edgecolor="#B9C7DD"))
+        ax.text(0.015, 0.93, "Lean's goal state  (⊢ = still to prove; names before ⊢ = facts "
+                "we may use; 'no goals' = proved; abbreviated)",
+                transform=ax.transAxes, fontsize=9.3, fontweight="bold", va="top",
+                color="#2A4F85")
+        if "goal" not in s and s["part"].startswith("Part 3"):
+            body = ["This step looks back at the finished proof: after the last tactic there are",
+                    "no goals left, so Lean has accepted the theorem."]
+            family = None
+        elif "goal" not in s:
+            body = ["No proof is running in this step: it explains definitions.",
+                    "Lean's goal state appears from step 5 (the theorem statement) on."]
+            family = None
+        else:
+            body = []
+            for ln in s["goal"](self, focus):
+                for part in ln.split("\n"):
+                    body += textwrap.wrap(part, 100, subsequent_indent="           ",
+                                          drop_whitespace=False) or [""]
+            family = "DejaVu Sans Mono"
+            body.append("(… and parenthesized lists abbreviate long or earlier hypotheses; "
+                        "Lean shows them in full.)")
+        ax.text(0.015, 0.7, "\n".join(body), transform=ax.transAxes, fontsize=8.8,
+                va="top", family=family, color=COLOR_TEXT, linespacing=1.35)
+
     def _draw_code(self, s: dict, focus: dict | None) -> None:
+        """The Lean source, read from disk. Long sources scroll so that the highlighted
+        lines are always visible; the header says which lines are shown."""
         ax = self.ax_code
         ax.clear()
         ax.axis("off")
@@ -1111,25 +1301,39 @@ class Explorer:
         anchors = list(s["anchors"])
         if "dyn_anchor" in s and focus is not None:
             anchors.append(s["dyn_anchor"](focus))
+        hl = highlighted_lines(src, anchors)
+        fontsize = 9.6
+        height_pt = ax.get_position().height * self.fig.get_figheight() * 72
+        line = fontsize * 1.42 / height_pt  # one code line, in axes fraction
+        top = 0.9
+        n_fit = int((top - 0.02) / line)
+        if len(src) <= n_fit:
+            first = 0
+        else:
+            lo, hi = (min(hl), max(hl)) if hl else (0, 0)
+            first = max(0, min(len(src) - n_fit, (lo + hi) // 2 - n_fit // 2))
+            if hl and hi - lo >= n_fit:
+                first = lo
+        shown = src[first:first + n_fit]
         name = ("GraphCh10/Exercises/Supp08.lean" if s["code"] == "proof"
                 else "GraphCh10/Definitions.lean + DefinitionTests.lean")
-        ax.text(0.015, 0.975, f"Lean source: {name}  (read from disk; highlighted = this step)",
-                transform=ax.transAxes, fontsize=9.5, fontweight="bold", va="top",
+        rng = ("" if len(shown) == len(src) else
+               f"; lines {first + 1}–{first + len(shown)} of {len(src)}")
+        ax.text(0.015, 0.975, f"Lean source: {name}  (from disk; gold = this step{rng};  "
+                "⟨ ⟩ = angle brackets)",
+                transform=ax.transAxes, fontsize=8.6, fontweight="bold", va="top",
                 color="#555555")
-        n = max(len(src), 22)
-        step_y = 0.89 / n
-        fontsize = 9 if n <= 30 else 8.4
-        for i, ln in enumerate(src):
-            hl = any(a in ln for a in anchors)
-            y = 0.925 - i * step_y
-            if hl:
-                ax.add_patch(plt.Rectangle((0.008, y - step_y * 0.95), 0.984, step_y * 0.98,
+        for j, ln in enumerate(shown):
+            i = first + j
+            y = top - j * line
+            if i in hl:
+                ax.add_patch(plt.Rectangle((0.008, y - line * 0.98), 0.984, line,
                                            transform=ax.transAxes, facecolor=COLOR_CODE_HL,
                                            edgecolor=COLOR_FOCUS, linewidth=1))
             ax.text(0.015, y, ln if ln else " ", transform=ax.transAxes, va="top",
                     fontsize=fontsize, family="DejaVu Sans Mono",
-                    color=COLOR_TEXT if hl or not ln.strip().startswith("--") else "#6A737D",
-                    fontweight="bold" if hl else "normal")
+                    color=COLOR_TEXT if i in hl or not ln.strip().startswith("--") else "#6A737D",
+                    fontweight="bold" if i in hl else "normal")
 
 
 # ---------------------------------------------------------------------------
@@ -1150,6 +1354,8 @@ def _click(ex: Explorer, btn: Button) -> None:
 
 def self_test(ex: Explorer, outdir: Path) -> None:
     outdir.mkdir(parents=True, exist_ok=True)
+    # 0. Degrees start hidden (predict first); entering step 4 reveals them.
+    assert ex.hidden and not ex.revealed
     # 1. Every step renders, for every example the step offers; exactly the right code lines
     #    are highlighted (including the per-case line of the `match`).
     for k, s in enumerate(STEPS):
@@ -1161,9 +1367,27 @@ def self_test(ex: Explorer, outdir: Path) -> None:
             if "dyn_anchor" in s:
                 hits = [ln for ln in ex.lean["proof"] if s["dyn_anchor"](f) in ln]
                 assert len(hits) == 1
+            if s["focus"] == "pair":  # goal box follows the Lean infoview for this case
+                g = "\n".join(s["goal"](ex, f))
+                assert f"hne : {f['u']} ≠ {f['w']}" in g
+                if f["u"] == f["w"]:
+                    assert f["edges"] == {} and "absurd" in g
+                else:
+                    assert f"⊢ {EX8_DEG[f['u']]} ≠ {EX8_DEG[f['w']]}" in g
             ex.next_example()
         ex.enter_step(k)
         ex.fig.savefig(outdir / f"step_{k + 1:02d}.png", dpi=90)
+    # 1b. The `have … := by` steps highlight their whole block, including `decide`.
+    for title in ("have hMulti", "have hCard", "have hDeg"):
+        s = next(st for st in STEPS if st["title"].startswith(title))
+        src = ex.lean["proof"]
+        hl = highlighted_lines(src, s["anchors"])
+        assert any(src[i].strip() == "decide" for i in hl), f"{title}: decide not highlighted"
+    # 1c. Every proof step has a goal box; the case (0, 1) matches the Lean infoview
+    #     (`⊢ 1 ≠ 3` after `rw [h0, h1]`, captured with lean_goal).
+    assert all("goal" in st for st in STEPS if st["part"].startswith("Part 2"))
+    pair_step = next(st for st in STEPS if st["focus"] == "pair")
+    assert "after rw [h0, h1]:     ⊢ 1 ≠ 3" in pair_step["goal"](ex, dict(u=0, w=1))
     # 2. Simulated clicks on the Next / Previous buttons move the walkthrough.
     ex.enter_step(0)
     _click(ex, ex.btn_next)
@@ -1197,6 +1421,32 @@ def self_test(ex: Explorer, outdir: Path) -> None:
         ex.enter_step(k)
     _click(ex, ex.btn_reset)
     assert ex.ends == EX8_ENDS and is_counterexample(ex.ends) and not ex.edited
+    # 4b. Predict-then-check: hiding the degrees hides every number, showing restores them.
+    ex.enter_step(deg_step)
+    _click(ex, ex.btn_hide)
+    assert ex.hidden and "?" in ex.formula(1) and ex.btn_hide.label.get_text() == "Show degrees"
+    ex.fig.savefig(outdir / "hidden_degrees.png", dpi=90)
+    _click(ex, ex.btn_hide)
+    assert not ex.hidden and ex.formula(1).endswith("= 3")
+    # 4b'. Edits keep the names of untouched edges: a new edge is appended, a loop is not e0.
+    _click(ex, ex.edit_buttons["+02"])
+    assert ex.ends["e0"] == sym2(0, 1) and ex.ends["e3"] == sym2(0, 2)
+    _click(ex, ex.edit_buttons["-02"])
+    assert ex.ends == EX8_ENDS
+    # 4b''. Step 14 browses all 8 simple graphs on 3 vertices, each repeating a degree.
+    ex.enter_step(len(STEPS) - 1)
+    for _ in range(8):
+        f, n = ex.focus_info("simple")
+        assert n == 8 and equal_degree_pairs(f["graph"]) and is_multigraph(f["graph"])
+        ex.next_example()
+    ex.fig.savefig(outdir / "simple_graphs.png", dpi=90)
+    assert ex.ends == EX8_ENDS  # browsing does not change the user's graph
+    # 4c. Loops at vertices 1 and 2 also count twice.
+    _click(ex, ex.loop_buttons[1])
+    _click(ex, ex.loop_buttons[2])
+    assert ex.degs == {0: 1, 1: 5, 2: 4} and not is_multigraph(ex.ends)
+    ex.fig.savefig(outdir / "loops_1_2.png", dpi=90)
+    _click(ex, ex.btn_reset)
     # 5. Another counterexample can be built: {0,1}, {0,2}, {0,2}, {1,2}, {1,2}, {1,2}.
     #    Degrees 3, 4, 5 -- all different.
     _click(ex, ex.edit_buttons["+02"])
