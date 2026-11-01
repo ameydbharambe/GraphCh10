@@ -3,4 +3,5 @@ import GraphCh10.Foundations
 import GraphCh10.Definitions
 import GraphCh10.Lemmas
 import GraphCh10.DefinitionTests
+import GraphCh10.Exercises.Supp08
 import GraphCh10.Exercises.Supp09a
