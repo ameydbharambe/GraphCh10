@@ -40,4 +40,57 @@ theorem finite_edges_of_isSimple [Finite V] (hG : G.IsSimple) : Finite E := by
 
 end DGraph
 
+namespace UGraph
+
+variable {V : Type u} {E : Type v} (G : UGraph V E)
+
+/-- The finite set `G.nbrFinset v` has exactly the members of N(v) = `G.nbhd v`. -/
+theorem mem_nbrFinset [Fintype V] [Fintype E] [DecidableEq V] (v u : V) :
+    u ∈ G.nbrFinset v ↔ u ∈ G.nbhd v := by
+  -- both sides say that `u` is adjacent to `v`
+  simp only [nbrFinset, Finset.mem_filter, Finset.mem_univ, true_and]
+  rfl
+
+/-- Paths can be joined: a path from `x` to `y` followed by a path from `y` to `z` gives a path from
+`x` to `z`. -/
+theorem path_trans {x y z : V} (p : G.Path x y) (hq : Nonempty (G.Path y z)) :
+    Nonempty (G.Path x z) := by
+  obtain ⟨q⟩ := hq
+  induction p with
+  | nil _ =>
+    -- the empty path at `x` adds nothing
+    exact ⟨q⟩
+  | cons e h _ ih =>
+    -- keep the first edge `e` and join the rest of the path with `q`
+    obtain ⟨r⟩ := ih q
+    exact ⟨Path.cons e h r⟩
+
+/-- Undirected paths can be reversed: a path from `x` to `y` gives a path from `y` to `x`. -/
+theorem path_symm {x y : V} (p : G.Path x y) : Nonempty (G.Path y x) := by
+  induction p with
+  | nil x =>
+    -- the empty path is its own reverse
+    exact ⟨Path.nil x⟩
+  | @cons x x' z e h _ ih =>
+    -- the edge `e` is associated to {x, x'} = {x', x}, so it is a one-edge path from `x'` to `x`
+    have hback : G.ends e = s(x', x) := by rw [h, Sym2.eq_swap]
+    have hstep : Nonempty (G.Path x' x) := ⟨Path.cons e hback (Path.nil x)⟩
+    -- reverse the rest (from `z` to `x'`), then take the edge back to `x`
+    obtain ⟨r⟩ := ih
+    exact G.path_trans r hstep
+
+/-- If every vertex is joined by a path to one fixed vertex `c`, the graph is connected. -/
+theorem connected_of_forall_path_to (c : V) (h : ∀ x : V, Nonempty (G.Path x c)) :
+    G.Connected := by
+  intro x y
+  -- a path from `x` to `c`
+  obtain ⟨p⟩ := h x
+  -- a path from `c` to `y`: reverse a path from `y` to `c`
+  obtain ⟨q⟩ := h y
+  have hcy : Nonempty (G.Path c y) := G.path_symm q
+  -- join them at `c`
+  exact G.path_trans p hcy
+
+end UGraph
+
 end GraphCh10
