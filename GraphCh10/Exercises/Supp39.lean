@@ -1,4 +1,4 @@
--- STATUS: UNFINISHED
+-- STATUS: COMPLETE
 
 import GraphCh10.Definitions
 import GraphCh10.Lemmas
