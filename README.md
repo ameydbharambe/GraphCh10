@@ -109,7 +109,7 @@ proofs interactively (hover over a step to see what remains to be proved).
 ### 2. Get the code
 
 ```bash
-git clone <this-repository-url> GraphCh10
+git clone https://github.com/ameydbharambe/GraphCh10.git
 cd GraphCh10
 ```
 
